@@ -18,7 +18,7 @@ body {
   margin: auto 20px auto 20px;
 }
 
-.platformButton {
+.defaultButton {
   width: 100%;
   background-color: #007bff;
   border: none;
@@ -30,11 +30,11 @@ body {
   padding: 10px 15px;
 }
 
-.platformButton:hover {
+.defaultButton:hover {
   background-color: #0056b3;
 }
 
-.platformButton:active {
+.defaultButton:active {
   transform: scale(0.96);
 }
 
@@ -54,6 +54,15 @@ body {
   border-bottom: 7px solid #007bff;
   height: 60vh;
   border-radius: 5px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+  scrollbar-width: none;
 }
 
 .success-message {

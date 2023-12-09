@@ -11,3 +11,7 @@ window.addEventListener("DOMContentLoaded", () => {
     window.location.href = "html/nintendo.html";
   });
 });
+
+window.api.receive('message-from-main', (message, type, typingSpeed) => {
+  insertTerminal(message, type, typingSpeed);
+});

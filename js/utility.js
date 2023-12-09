@@ -1,6 +1,6 @@
 function insertTerminal(message, type = "default", typingSpeed = 20) {
   const terminalWindow = document.getElementById("terminalWindow");
-  const messageSpan = document.createElement("span");
+  const messageSpan = document.createElement("div");
 
   switch (type) {
     case "success":
@@ -22,7 +22,6 @@ function insertTerminal(message, type = "default", typingSpeed = 20) {
       i++;
       setTimeout(typeWriter, typingSpeed);
     } else {
-      terminalWindow.appendChild(document.createElement("br"));
       terminalWindow.scrollTop = terminalWindow.scrollHeight;
     }
   }
