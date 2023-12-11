@@ -37,14 +37,67 @@ app.whenReady().then(() => {
   setTimeout(() => {
     win.webContents.send("message-from-main", "Welcome!");
   }, 500);
-  // clearAmazonCookie();
+  // clearCookie();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
 
-// Check if login session exists
+// ======================================================================
+// Logout module
+// ======================================================================
+ipcMain.on("display-login", async (event) => {
+  await checkLoginStatus(event);
+});
+
+ipcMain.on("logout", async (event, domain) => {
+  await clearCookie(domain);
+  await checkLoginStatus(event);
+});
+
+const checkLoginStatus = async (event) => {
+  const services = [
+    { url: "https://gaming.amazon.com/home", cookieName: "x-main" },
+    { url: "https://www.twitch.tv/drops/campaigns", cookieName: "auth-token" },
+  ];
+
+  const results = {};
+  for (const service of services) {
+    const cookies = await session.defaultSession.cookies.get({
+      url: service.url,
+    });
+    const isCookiePresent = cookies.some(
+      (cookie) => cookie.name === service.cookieName
+    );
+    results[service.url] = isCookiePresent;
+  }
+
+  event.reply("login-status", results);
+};
+
+async function clearCookie(domain) {
+  try {
+    const cookies = await session.defaultSession.cookies.get({});
+    for (const cookie of cookies) {
+      if (cookie.domain.includes(domain)) {
+        await session.defaultSession.cookies.remove(
+          `https://${cookie.domain}`,
+          cookie.name
+        );
+        console.log(
+          `Cleared cookie ${cookie.name} for domain ${cookie.domain}`
+        );
+      }
+    }
+  } catch (error) {
+    console.error(`Error in clearCookie: ${error}`);
+  }
+}
+
+// ======================================================================
+// Login module
+// ======================================================================
 ipcMain.on("check-session", async (event, serviceUrl, cookieName) => {
   const cookies = await session.defaultSession.cookies.get({ url: serviceUrl });
   const isCookiePresent = cookies.some((cookie) => cookie.name === cookieName);
@@ -52,7 +105,8 @@ ipcMain.on("check-session", async (event, serviceUrl, cookieName) => {
   if (!isCookiePresent) {
     win.webContents.send(
       "message-from-main",
-      "Login credentials not found, opening the login window..."
+      "Login credentials not found, opening the login window...",
+      "error"
     );
     ipcMainEvent = event;
     createLoginWindow(serviceUrl);
@@ -63,6 +117,7 @@ ipcMain.on("check-session", async (event, serviceUrl, cookieName) => {
 
 // Create login window with login url
 function createLoginWindow(serviceUrl) {
+  // Amazon
   if (serviceUrl.includes("amazon.com")) {
     getAmazonLoginUrl(serviceUrl, (loginUrl) => {
       if (loginUrl) {
@@ -75,8 +130,14 @@ function createLoginWindow(serviceUrl) {
         ipcMainEvent.reply("session-status", false);
       }
     });
-  } else {
-    // Other platforms
+
+    // Twitch
+  } else if (serviceUrl.includes("twitch.tv")) {
+    win.webContents.send(
+      "message-from-main",
+      "Login window opened, please wait for the page to load..."
+    );
+    openLoginWindow("https://www.twitch.tv/login");
   }
 }
 
@@ -88,37 +149,65 @@ function openLoginWindow(loginUrl) {
   });
 
   loginWindow.loadURL(loginUrl);
-
   let isLoginWindowDestroyedProgrammatically = false;
+  let loginHandled = false;
 
-  // Amazon
+  loginWindow.webContents.on("did-finish-load", () => {
+    // Delete twitch login privacy window
+    if (loginUrl.includes("twitch.tv")) {
+      loginWindow.webContents.executeJavaScript(`
+        setInterval(() => {
+          const privacy = document.querySelector('div.Layout-sc-1xcs6mc-0.gUvyVO');
+          if (privacy) {
+            privacy.remove();
+          }
+        }, 500);
+      `);
+    }
+  });
+
   loginWindow.webContents.session.cookies.on(
     "changed",
     (event, cookie, cause, removed) => {
-      if (
-        !removed &&
-        cookie.domain.includes("amazon.com") &&
-        cookie.name === "x-main" &&
-        cookie.value
-      ) {
-        console.log("x-main cookie found, login successful.");
-        isLoginWindowDestroyedProgrammatically = true;
-        loginWindow.destroy();
-        ipcMainEvent.reply("session-status", true);
-        return;
+      if (loginHandled) return;
+
+      if (!removed && cookie.value) {
+        // Amazon
+        if (cookie.domain.includes("amazon.com") && cookie.name === "x-main") {
+          console.log("Amazon cookie found, login successful.");
+          loginHandled = true;
+        }
+
+        // Twitch
+        else if (
+          cookie.domain.includes("twitch.tv") &&
+          cookie.name === "auth-token"
+        ) {
+          console.log("Twitch cookie found, login successful.");
+          loginHandled = true;
+        }
+
+        if (loginHandled) {
+          isLoginWindowDestroyedProgrammatically = true;
+          loginWindow.destroy();
+          ipcMainEvent.reply("session-status", true);
+          return;
+        }
       }
     }
   );
 
-  loginWindow.on("closed", () => {
+  loginWindow.once("close", () => {
     if (!isLoginWindowDestroyedProgrammatically) {
       win.webContents.send(
         "message-from-main",
-        "Login window closed by user",
+        "Login window closed by user.",
         "error"
       );
+      loginWindow.webContents.session.cookies.removeAllListeners("changed");
       ipcMainEvent.reply("session-status", false);
     }
+    loginHandled = false;
   });
 }
 
@@ -136,10 +225,16 @@ function getAmazonLoginUrl(serviceUrl, callback) {
     tempWindow.webContents
       .executeJavaScript(
         `
-      setTimeout(() => {
-        document.querySelector('[data-a-target="sign-in-button"]').click();
-      }, 1000);
-    `
+        const observer = new MutationObserver((mutations, obs) => {
+          const button = document.querySelector('[data-a-target="sign-in-button"]');
+          if (button) {
+            button.click();
+            obs.disconnect();
+          }
+        });
+      
+        observer.observe(document.body, { childList: true, subtree: true });
+      `
       )
       .catch((error) => {
         console.error("JavaScript execution failed:", error);
@@ -148,6 +243,7 @@ function getAmazonLoginUrl(serviceUrl, callback) {
           "Error loading amazon login page.",
           "error"
         );
+        tempWindow.destroy();
         callback(null);
         return;
       });
@@ -161,7 +257,9 @@ function getAmazonLoginUrl(serviceUrl, callback) {
   });
 }
 
+// ======================================================================
 // Amazon claim process
+// ======================================================================
 ipcMain.on("amazon-claim", async (event) => {
   let amazonWindow = new BrowserWindow({
     width: 1920,
@@ -176,57 +274,70 @@ ipcMain.on("amazon-claim", async (event) => {
   );
 
   amazonWindow.webContents.on("did-finish-load", () => {
-    setTimeout(() => {
-      amazonWindow.webContents
-        .executeJavaScript(
-          `
-          (function() {
-            var result = {};
-            var blocks = document.querySelectorAll('.tw-block');
-            
-            blocks.forEach(block => {
-                var claimButton = block.querySelector('p[title="Claim"]');
-                if (claimButton) {
+    // Find all .tw-block with a claim button
+    amazonWindow.webContents
+      .executeJavaScript(
+        `
+        new Promise((resolve, reject) => {
+          let mutationTimeout;
+          const observer = new MutationObserver(() => {
+            clearTimeout(mutationTimeout);
+
+            mutationTimeout = setTimeout(() => {
+              const blocks = document.querySelectorAll('.tw-block');
+              if (blocks.length > 0) {
+                observer.disconnect();
+    
+                const result = {};
+                blocks.forEach(block => {
+                  var claimButton = block.querySelector('p[title="Claim"]');
+                  if (claimButton) {
                     var gameName = block.querySelector('p a[aria-label]')?.getAttribute('aria-label').trim();
                     var itemName = block.querySelector('.item-card-details__body__primary h3')?.textContent.trim();
                     var gameLink = block.querySelector('a[data-a-target="learn-more-card"]')?.href;
-    
                     if (gameName && itemName && gameLink) {
-                        result[gameName] = { 'ItemName': itemName, 'Link': gameLink };
+                      result[gameName] = { 'ItemName': itemName, 'Link': gameLink };
                     }
-                }
-            });
-    
-            return result;
-        })();
-      `
-        )
-        .then((result) => {
-          console.log(result);
-          win.webContents.send("message-from-main", "Claiming in progress...");
-          let claimWindow = new BrowserWindow({
-            width: 1280,
-            height: 720,
-            // show: false,
+                  }
+                });
+                resolve(result);
+              }
+            }, 1000);
           });
-          claimNextItem(Object.keys(result), result, claimWindow);
+    
+          observer.observe(document.body, { childList: true, subtree: true });
         })
-        .catch((error) => {
-          console.error("JavaScript execution failed:", error);
-          win.webContents.send(
-            "message-from-main",
-            "Error retrieving list of items to claim.",
-            "error"
-          );
-          return;
+      `
+      )
+      .then((result) => {
+        console.log(result);
+        win.webContents.send("message-from-main", "Claiming in progress...");
+        win.webContents.send("message-from-main", "hideLoader");
+        amazonWindow.close();
+        let claimWindow = new BrowserWindow({
+          width: 1280,
+          height: 720,
+          show: false,
         });
-    }, 3000);
+        claimNextItem(Object.keys(result), result, claimWindow);
+      })
+      .catch((error) => {
+        console.error("JavaScript execution failed:", error);
+        win.webContents.send(
+          "message-from-main",
+          "Error retrieving list of items to claim.",
+          "error"
+        );
+        return;
+      });
   });
 });
 
+// Iterate and claim each amazon reward
 function claimNextItem(game, claimList, claimWindow, index = 0) {
   if (index >= game.length) {
     claimWindow.close();
+    win.webContents.send("claiming", null, null, "finish");
     return;
   }
 
@@ -234,56 +345,107 @@ function claimNextItem(game, claimList, claimWindow, index = 0) {
   const item = claimList[gameName];
   claimWindow.loadURL(item["Link"]);
 
-  claimWindow.webContents.once("did-finish-load", () => {
+  function navigateListener() {
+    win.webContents.send(
+      "message-from-main",
+      `Successfully claimed items for ${gameName}.`,
+      "success"
+    );
+    win.webContents.send("claiming", gameName, item["ItemName"], "true");
     setTimeout(() => {
-      claimWindow.webContents
-        .executeJavaScript(
-          `
-          document.querySelector('[data-a-target="buy-box_call-to-action"]').click();
+      claimNextItem(game, claimList, claimWindow, index + 1);
+    }, 2000);
+  }
+
+  claimWindow.webContents.once("did-finish-load", () => {
+    claimWindow.webContents.once("did-navigate", navigateListener);
+    claimWindow.webContents
+      .executeJavaScript(
         `
-        )
-        .then(() => {
+        new Promise((resolve, reject) => {
+          const observer = new MutationObserver((mutations) => {
+            // Initial check for the claim button
+            const claimButton = document.querySelector('button[data-a-target="buy-box_call-to-action"]');
+            if (claimButton) {
+              claimButton.click();
+            }
+
+            // Subsequent checks for modal and account linking buttons
+            for (let mutation of mutations) {
+              if (mutation.addedNodes.length) {
+                if (document.querySelector('[data-a-target="LinkAccountModal"]')) {
+                  const linkAccountButton = document.querySelector('button[data-a-target="LinkAccountButton"]');
+                  const alreadyLinkedButton = document.querySelector('button[data-a-target="AlreadyLinkedAccountButton"]');
+
+                  if (linkAccountButton && alreadyLinkedButton) {
+                    alreadyLinkedButton.click();
+                    observer.disconnect();
+
+                  } else if (linkAccountButton) {
+                    observer.disconnect();
+                    resolve('failure');
+                  }
+                }
+              }
+            }
+          });
+
+          observer.observe(document.body, {
+            childList: true,
+            subtree: true
+          });
+
           setTimeout(() => {
-            win.webContents.send("claiming", gameName, item["ItemName"], true);
-            claimNextItem(game, claimList, claimWindow, index + 1);
-          }, 2000);
-        })
-        .catch((error) => {
-          console.error("JavaScript execution failed:", error);
+            observer.disconnect();
+            resolve('timeout');
+          }, 10000);
+        });
+      `
+      )
+      .then((result) => {
+        if (result === "failure") {
           win.webContents.send(
             "message-from-main",
-            "Error claiming rewards.",
+            `Failed to claim items for ${gameName}, account linking required.`,
             "error"
           );
+        } else if (result === "timeout") {
+          win.webContents.send(
+            "message-from-main",
+            `Failed to claim items for ${gameName} due to timeout.`,
+            "error"
+          );
+        }
+
+        win.webContents.send("claiming", gameName, item["ItemName"], "false");
+        setTimeout(() => {
+          claimWindow.webContents.removeListener(
+            "did-navigate",
+            navigateListener
+          );
           claimNextItem(game, claimList, claimWindow, index + 1);
-        });
-    }, 3000);
+        }, 2000);
+      })
+      .catch((error) => {
+        console.error("JavaScript execution failed:", error);
+        win.webContents.send(
+          "message-from-main",
+          `Failed to claim items for ${gameName} due to an error.`,
+          "error"
+        );
+        win.webContents.send("claiming", gameName, item["ItemName"], "false");
+        setTimeout(() => {
+          claimWindow.webContents.removeListener(
+            "did-navigate",
+            navigateListener
+          );
+          claimNextItem(game, claimList, claimWindow, index + 1);
+        }, 2000);
+      });
   });
 }
 
-// for testing purpose
-function clearAmazonCookie() {
-  const amazonDomain = "amazon.com"; // The domain for which to clear cookies
-
-  session.defaultSession.cookies
-    .get({})
-    .then((cookies) => {
-      cookies.forEach((cookie) => {
-        if (cookie.domain.includes(amazonDomain)) {
-          session.defaultSession.cookies
-            .remove(`https://${cookie.domain}`, cookie.name)
-            .then(() => {
-              console.log(
-                `Cleared cookie ${cookie.name} for domain ${cookie.domain}`
-              );
-            })
-            .catch((error) => {
-              console.error(`Error clearing cookie ${cookie.name}: ${error}`);
-            });
-        }
-      });
-    })
-    .catch((error) => {
-      console.error(`Error fetching cookies: ${error}`);
-    });
-}
+// ======================================================================
+// Twitch claim process
+// ======================================================================
+ipcMain.on("twitch-claim", async (event) => {});

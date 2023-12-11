@@ -1,14 +1,11 @@
 window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("retryButton").addEventListener("click", (event) => {
     event.target.style.display = "none";
+    showLoader();
     checkSession();
   });
 
   checkSession();
-});
-
-window.api.receive("message-from-main", (message, type, typingSpeed) => {
-  insertTerminal(message, type, typingSpeed);
 });
 
 function checkSession() {
@@ -18,24 +15,27 @@ function checkSession() {
 
 window.api.receive("session-status", (isLoggedIn) => {
   if (!isLoggedIn) {
+    hideLoader();
     showRetryButton();
   } else {
     insertTerminal("Login session found!", "success");
-    document.getElementById(
-      "onGoingClaim"
-    ).innerHTML = `<h1>Claiming:</h1><div id="gameItem"></div>`;
     window.api.send("amazon-claim");
   }
 });
 
 window.api.receive("claiming", (gameName, itemName, status) => {
-  const gameDiv = document.getElementById("gameItem");
-  gameDiv.innerHTML = `<h1>${gameName}</h1><h2>${itemName}</h2>`;
-});
-
-function showRetryButton() {
-  const retryButton = document.getElementById("retryButton");
-  if (retryButton) {
-    retryButton.style.display = "block";
+  const gameDiv = document.getElementById("onGoingClaim");
+  gameDiv.style.animation = "fadeInDown 0.5s";
+  gameDiv.innerHTML = `<p>Claiming:</p><h1>${gameName}</h1><hr><h2>${itemName}</h2>`;
+  if (status === "true") {
+    gameDiv.innerHTML += `<h3>Result: <span class="success-message">Success!</span></h3>`;
+  } else if (status === "false") {
+    gameDiv.innerHTML += `<h3>Result: <span class="error-message">Failed!</span></h3>`;
+  } else if (status === "finish") {
+    insertTerminal("Claiming completed.");
+    gameDiv.innerHTML = `<h1>All items claimed!</h1>`;
   }
-}
+  setTimeout(() => {
+    gameDiv.style.animation = "none";
+  }, 510);
+});

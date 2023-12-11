@@ -10,13 +10,23 @@
   </head>
   <body>
     <div id="mainContainer">
-      <div id="platforms">
-        <button class="defaultButton" id="twitch">Twitch Drops</button>
-        <button class="defaultButton" id="amazon">Amazon Prime Gaming</button>
-        <button class="defaultButton" id="nintendo">Nintendo Switch Platinum Points</button>
+      <div id="main">
+        <div id="platforms">
+          <button class="defaultButton" id="twitch">Twitch Drops</button>
+          <button class="defaultButton" id="amazon">Amazon Prime Gaming</button>
+          <button class="defaultButton" id="nintendo">Nintendo Switch Platinum Points</button>
+        </div>
+        <div id="unlinkAccounts">
+          <button class="dangerButton" id="unlinkButton">Unlink Accounts</button>
+          <div id="loginStatus"></div>
+          <button class="defaultButton" id="back">Home</button>
+        </div>
       </div>
       <div id="terminal">
-        <div id="terminalWindow"></div>
+        <div id="outerTerminalWindow">
+          <div id="innerTerminalWindow">
+          </div>
+        </div>
       </div>
     </div>
   </body>

@@ -1,5 +1,13 @@
+window.api.receive("message-from-main", (message, type, typingSpeed) => {
+  if (message === "hideLoader") {
+    hideLoader();
+    return;
+  }
+  insertTerminal(message, type, typingSpeed);
+});
+
 function insertTerminal(message, type = "default", typingSpeed = 20) {
-  const terminalWindow = document.getElementById("terminalWindow");
+  const terminalWindow = document.getElementById("innerTerminalWindow");
   const messageSpan = document.createElement("div");
 
   switch (type) {
@@ -27,4 +35,25 @@ function insertTerminal(message, type = "default", typingSpeed = 20) {
   }
 
   typeWriter();
+}
+
+function showLoader() {
+  const loader = document.getElementById("loader");
+  if (loader) {
+    loader.style.display = "block";
+  }
+}
+
+function hideLoader() {
+  const loader = document.getElementById("loader");
+  if (loader) {
+    loader.style.display = "none";
+  }
+}
+
+function showRetryButton() {
+  const retryButton = document.getElementById("retryButton");
+  if (retryButton) {
+    retryButton.style.display = "block";
+  }
 }

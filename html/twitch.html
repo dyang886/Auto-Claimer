@@ -5,14 +5,21 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'">
     <title>Auto Claimer</title>
     <link rel="stylesheet" href="../css/index.css">
+    <link rel="stylesheet" href="../css/twitch.css">
+    <script src="../js/utility.js"></script>
+    <script src="../js/twitch.js"></script>
   </head>
   <body>
     <div id="mainContainer">
-      <div id="">
-        
+      <div id="claim">
+        <div id="loader"></div>
+        <button id="retryButton" class="defaultButton">Retry Login</button>
       </div>
       <div id="terminal">
-        <div id="terminalWindow"></div>
+        <div id="outerTerminalWindow">
+          <div id="innerTerminalWindow">
+          </div>
+        </div>
       </div>
     </div>
   </body>
