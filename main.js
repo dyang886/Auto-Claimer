@@ -28,16 +28,15 @@ const createWindow = () => {
         window.close();
       }
     });
-    app.quit();
+
+    if (process.platform !== "darwin") {
+      app.quit();
+    }
   });
 };
 
 app.whenReady().then(() => {
   createWindow();
-  setTimeout(() => {
-    win.webContents.send("message-from-main", "Welcome!");
-  }, 500);
-  // clearCookie();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -76,19 +75,12 @@ const checkLoginStatus = async (event) => {
   event.reply("login-status", results);
 };
 
-async function clearCookie(domain) {
+async function clearCookie(url) {
   try {
-    const cookies = await session.defaultSession.cookies.get({});
+    const cookies = await session.defaultSession.cookies.get({ url });
     for (const cookie of cookies) {
-      if (cookie.domain.includes(domain)) {
-        await session.defaultSession.cookies.remove(
-          `https://${cookie.domain}`,
-          cookie.name
-        );
-        console.log(
-          `Cleared cookie ${cookie.name} for domain ${cookie.domain}`
-        );
-      }
+      await session.defaultSession.cookies.remove(url, cookie.name);
+      console.log(`Cleared cookie ${cookie.name} from ${url}`);
     }
   } catch (error) {
     console.error(`Error in clearCookie: ${error}`);
@@ -262,8 +254,8 @@ function getAmazonLoginUrl(serviceUrl, callback) {
 // ======================================================================
 ipcMain.on("amazon-claim", async (event) => {
   let amazonWindow = new BrowserWindow({
-    width: 1920,
-    height: 1080,
+    width: 1280,
+    height: 720,
     show: false,
   });
 
@@ -353,12 +345,16 @@ function claimNextItem(game, claimList, claimWindow, index = 0) {
     );
     win.webContents.send("claiming", gameName, item["ItemName"], "true");
     setTimeout(() => {
+      claimWindow.webContents.removeListener(
+        "did-navigate-in-page",
+        navigateListener
+      );
       claimNextItem(game, claimList, claimWindow, index + 1);
     }, 2000);
   }
 
   claimWindow.webContents.once("did-finish-load", () => {
-    claimWindow.webContents.once("did-navigate", navigateListener);
+    claimWindow.webContents.on("did-navigate-in-page", navigateListener);
     claimWindow.webContents
       .executeJavaScript(
         `
@@ -398,7 +394,7 @@ function claimNextItem(game, claimList, claimWindow, index = 0) {
           setTimeout(() => {
             observer.disconnect();
             resolve('timeout');
-          }, 10000);
+          }, 7000);
         });
       `
       )
@@ -420,7 +416,7 @@ function claimNextItem(game, claimList, claimWindow, index = 0) {
         win.webContents.send("claiming", gameName, item["ItemName"], "false");
         setTimeout(() => {
           claimWindow.webContents.removeListener(
-            "did-navigate",
+            "did-navigate-in-page",
             navigateListener
           );
           claimNextItem(game, claimList, claimWindow, index + 1);
@@ -436,7 +432,7 @@ function claimNextItem(game, claimList, claimWindow, index = 0) {
         win.webContents.send("claiming", gameName, item["ItemName"], "false");
         setTimeout(() => {
           claimWindow.webContents.removeListener(
-            "did-navigate",
+            "did-navigate-in-page",
             navigateListener
           );
           claimNextItem(game, claimList, claimWindow, index + 1);
@@ -448,4 +444,90 @@ function claimNextItem(game, claimList, claimWindow, index = 0) {
 // ======================================================================
 // Twitch claim process
 // ======================================================================
-ipcMain.on("twitch-claim", async (event) => {});
+ipcMain.on("twitch-claim", async (event) => {
+  let twitchWindow = new BrowserWindow({
+    width: 1280,
+    height: 720,
+    // show: false,
+  });
+
+  twitchWindow.loadURL("https://www.twitch.tv/drops/campaigns");
+  win.webContents.send(
+    "message-from-main",
+    "Retrieving list of active campaigns..."
+  );
+
+  twitchWindow.webContents.on("did-finish-load", () => {
+    twitchWindow.webContents
+      .executeJavaScript(
+        `
+        new Promise((resolve, reject) => {
+          let mutationTimeout;
+          const observer = new MutationObserver(() => {
+            clearTimeout(mutationTimeout);
+
+            mutationTimeout = setTimeout(() => {
+              const dropDivs = document.querySelectorAll('.Layout-sc-1xcs6mc-0.ivrFkx + .Layout-sc-1xcs6mc-0');
+              const container = Array.from(dropDivs).find(div => div.getAttribute('class') === 'Layout-sc-1xcs6mc-0');
+              const gameDivs = container.querySelectorAll(':scope > .Layout-sc-1xcs6mc-0');
+              if (gameDivs.length > 0) {
+                observer.disconnect();
+                const gamesList = [];
+
+                gameDivs.forEach(gameDiv => {
+                  const gameName = gameDiv.querySelector('h3').textContent;
+                  const itemStreamDiv = gameDiv.querySelector('.tw-typeset');
+                  const itemStreamElements = itemStreamDiv.querySelectorAll('li');
+                  const itemsList = [];
+                  const streamLinks = [];
+
+                  itemStreamElements.forEach(li => {
+                    const span = li.querySelector('span');
+                    if (span) {
+                      itemsList.push(span.textContent.trim());
+                    }
+
+                    const streams = li.querySelectorAll('a');
+                    streams.forEach(a => {
+                      const text = a.textContent.trim();
+                      if (text.toLowerCase() === 'more' || text.toLowerCase() === 'a participating live channel') {
+                        streamLinks.push({ 'more': a.href });
+                      } else {
+                        streamLinks.push(a.href);
+                      }
+                    });
+                  });
+
+                  const connectedSpan = gameDiv.querySelector('span.tw-pill');
+                  const isConnected = connectedSpan ? true : false;
+
+                  gamesList.push({
+                    gameName,
+                    ItemList: itemsList,
+                    StreamList: streamLinks,
+                    Connected: isConnected
+                  });
+                });
+
+                resolve(gamesList);
+              }
+            }, 1000);
+          });
+
+          observer.observe(document.body, { childList: true, subtree: true });
+        })
+      `
+      )
+      .then((result) => {
+        console.log(result);
+      })
+      .catch((error) => {
+        console.error("JavaScript execution failed:", error);
+        win.webContents.send(
+          "message-from-main",
+          `Error retrieving list of campaigns.`,
+          "error"
+        );
+      });
+  });
+});

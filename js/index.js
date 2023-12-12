@@ -1,4 +1,6 @@
 window.addEventListener("DOMContentLoaded", () => {
+  insertTerminal("Welcome to Auto Claimer, your all-in-one game rewards claimer!");
+
   document.getElementById("twitch").addEventListener("click", function () {
     window.location.href = "html/twitch.html";
   });
@@ -11,14 +13,14 @@ window.addEventListener("DOMContentLoaded", () => {
     window.location.href = "html/nintendo.html";
   });
 
-  document.getElementById("back").addEventListener("click", function () {
+  document.getElementById("home").addEventListener("click", function () {
     window.location.href = "index.html";
   });
 
   document.getElementById("unlinkButton").addEventListener("click", (event) => {
     event.target.style.display = "none";
+    showHomeButton();
     document.getElementById("platforms").style.display = "none";
-    document.getElementById("back").style.display = "block";
     window.api.send("display-login");
   });
 });
@@ -41,23 +43,25 @@ window.api.receive("login-status", (status) => {
 
     if (serviceName) {
       loginStatus.innerHTML += `
-        <div>
+        <div class="account">
           <h3>${serviceName}: </h3>
           ${
             isLoggedIn
               ? `<button class="dangerButton" id="${buttonId}">Log Out</button>`
-              : "<h3>Logged Out</h3>"
+              : `<h3 class="status">Logged Out</h3>`
           }
         </div>`;
 
-      if (isLoggedIn) {
-        const logoutButton = document.getElementById(buttonId);
-        if (logoutButton) {
-          logoutButton.addEventListener("click", () => {
-            window.api.send("logout", url);
-          });
+      setTimeout(() => {
+        if (isLoggedIn) {
+          const logoutButton = document.getElementById(buttonId);
+          if (logoutButton) {
+            logoutButton.addEventListener("click", () => {
+              window.api.send("logout", url);
+            });
+          }
         }
-      }
+      }, 0);
     }
   });
 });

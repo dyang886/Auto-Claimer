@@ -11,12 +11,26 @@
   gap: 20px;
 }
 
-#unlinkAccounts {
+#unlinkButton {
   margin-top: 40px;
 }
 
-#back {
-  display: none;
+.account {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+}
+
+.account h3 {
+  margin-right: 20px;
+}
+
+.status {
+  color: #d32f2f;
+}
+
+#home {
+  margin-top: 40px;
 }
 
 /* General for all pages */
@@ -114,6 +128,10 @@ body {
 #retryButton {
   display: none;
   width: 50%;
+}
+
+#home {
+  display: none;
 }
 
 #loader {

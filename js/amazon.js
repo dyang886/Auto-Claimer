@@ -5,6 +5,10 @@ window.addEventListener("DOMContentLoaded", () => {
     checkSession();
   });
 
+  document.getElementById("home").addEventListener("click", function () {
+    window.location.href = "../index.html";
+  });
+
   checkSession();
 });
 
@@ -17,6 +21,7 @@ window.api.receive("session-status", (isLoggedIn) => {
   if (!isLoggedIn) {
     hideLoader();
     showRetryButton();
+    showHomeButton();
   } else {
     insertTerminal("Login session found!", "success");
     window.api.send("amazon-claim");
@@ -34,6 +39,7 @@ window.api.receive("claiming", (gameName, itemName, status) => {
   } else if (status === "finish") {
     insertTerminal("Claiming completed.");
     gameDiv.innerHTML = `<h1>All items claimed!</h1>`;
+    showHomeButton();
   }
   setTimeout(() => {
     gameDiv.style.animation = "none";

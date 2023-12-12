@@ -57,3 +57,10 @@ function showRetryButton() {
     retryButton.style.display = "block";
   }
 }
+
+function showHomeButton() {
+  const retryButton = document.getElementById("home");
+  if (retryButton) {
+    retryButton.style.display = "block";
+  }
+}
