@@ -448,38 +448,79 @@ ipcMain.on("twitch-claim", async (event) => {
   let twitchWindow = new BrowserWindow({
     width: 1280,
     height: 720,
-    // show: false,
+    show: false,
   });
 
   twitchWindow.loadURL("https://www.twitch.tv/drops/campaigns");
   win.webContents.send(
     "message-from-main",
-    "Retrieving list of active campaigns..."
+    "Retrieving list of open campaigns..."
   );
 
-  twitchWindow.webContents.on("did-finish-load", () => {
-    twitchWindow.webContents
-      .executeJavaScript(
-        `
-        new Promise((resolve, reject) => {
-          let mutationTimeout;
-          const observer = new MutationObserver(() => {
-            clearTimeout(mutationTimeout);
+  twitchWindow.webContents.on("did-finish-load", async () => {
+    const twitchList = await getTwitchCampaigns(twitchWindow);
+    win.webContents.send(
+      "message-from-main",
+      "Please select games that you want to claim."
+    );
+    win.webContents.send(
+      "message-from-main",
+      "Your selection will be saved for future sessions."
+    );
+    win.webContents.send("message-from-main", "hideLoader");
+    const gameNames = twitchList.map(game => game.GameName);
+    win.webContents.send("display-campaigns", gameNames);
+  });
+});
 
-            mutationTimeout = setTimeout(() => {
-              const dropDivs = document.querySelectorAll('.Layout-sc-1xcs6mc-0.ivrFkx + .Layout-sc-1xcs6mc-0');
-              const container = Array.from(dropDivs).find(div => div.getAttribute('class') === 'Layout-sc-1xcs6mc-0');
-              const gameDivs = container.querySelectorAll(':scope > .Layout-sc-1xcs6mc-0');
-              if (gameDivs.length > 0) {
-                observer.disconnect();
-                const gamesList = [];
+async function getTwitchCampaigns(twitchWindow) {
+  // result format:
+  // result = [
+  //   {
+  //     GameName: gameName,
+  //     RewardsList: [
+  //       [rewardName]: {
+  //         ItemList: [
+  //           /* reward item name */
+  //         ],
+  //         StreamList: [
+  //           /* streamer links */
+  //         ],
+  //       }
+  //     ],
+  //     Connected: isConnected
+  //   }
+  // ]
+  try {
+    const result = await twitchWindow.webContents.executeJavaScript(`
+      new Promise((resolve, reject) => {
+        let mutationTimeout;
+        const observer = new MutationObserver(() => {
+          clearTimeout(mutationTimeout);
 
-                gameDivs.forEach(gameDiv => {
-                  const gameName = gameDiv.querySelector('h3').textContent;
-                  const itemStreamDiv = gameDiv.querySelector('.tw-typeset');
+          mutationTimeout = setTimeout(() => {
+            const dropDivs = document.querySelectorAll('.Layout-sc-1xcs6mc-0.ivrFkx + .Layout-sc-1xcs6mc-0');
+            const container = Array.from(dropDivs).find(div => div.getAttribute('class') === 'Layout-sc-1xcs6mc-0');
+            const gameDivs = container.querySelectorAll(':scope > .Layout-sc-1xcs6mc-0');
+            if (gameDivs.length > 0) {
+              observer.disconnect();
+              let gamesList = [];
+
+              // Loop through each game campaign
+              gameDivs.forEach(gameDiv => {
+                const gameName = gameDiv.querySelector('h3').textContent;
+                const rewardsDiv = gameDiv.querySelector('.cRPebU > .Layout-sc-1xcs6mc-0') 
+                                || gameDiv.querySelector('.dyXzMr > .Layout-sc-1xcs6mc-0');
+                const rewardsChildren = rewardsDiv.querySelectorAll(':scope > .Layout-sc-1xcs6mc-0:not(.hmbWfq)');
+                let rewardsList = [];
+
+                // Loop through each reward for one campaign
+                rewardsChildren.forEach(childDiv => {
+                  const rewardName = childDiv.querySelector('p.CoreText-sc-1txzju1-0').textContent;
+                  const itemStreamDiv = childDiv.querySelector('.tw-typeset');
                   const itemStreamElements = itemStreamDiv.querySelectorAll('li');
-                  const itemsList = [];
-                  const streamLinks = [];
+                  let itemsList = [];
+                  let streamLinks = [];
 
                   itemStreamElements.forEach(li => {
                     const span = li.querySelector('span');
@@ -498,36 +539,43 @@ ipcMain.on("twitch-claim", async (event) => {
                     });
                   });
 
-                  const connectedSpan = gameDiv.querySelector('span.tw-pill');
-                  const isConnected = connectedSpan ? true : false;
-
-                  gamesList.push({
-                    gameName,
-                    ItemList: itemsList,
-                    StreamList: streamLinks,
-                    Connected: isConnected
+                  rewardsList.push({
+                    [rewardName]: {
+                      ItemList: itemsList,
+                      StreamList: streamLinks
+                    }
                   });
                 });
 
-                resolve(gamesList);
-              }
-            }, 1000);
-          });
+                const connectedSpan = gameDiv.querySelector('span.tw-pill');
+                const isConnected = connectedSpan ? true : false;
 
-          observer.observe(document.body, { childList: true, subtree: true });
-        })
-      `
-      )
-      .then((result) => {
-        console.log(result);
+                gamesList.push({
+                  GameName: gameName,
+                  RewardsList: rewardsList,
+                  Connected: isConnected
+                });
+              });
+
+              resolve(gamesList);
+            }
+          }, 1000);
+        });
+
+        observer.observe(document.body, { childList: true, subtree: true });
       })
-      .catch((error) => {
-        console.error("JavaScript execution failed:", error);
-        win.webContents.send(
-          "message-from-main",
-          `Error retrieving list of campaigns.`,
-          "error"
-        );
-      });
-  });
-});
+    `);
+    console.log("Retrieved twitch campaign list.");
+    // const resultString = JSON.stringify(result, null, 2);
+    // console.log(resultString);
+    twitchWindow.close();
+    return result;
+  } catch (error) {
+    console.error("JavaScript execution failed:", error);
+    win.webContents.send(
+      "message-from-main",
+      "Error retrieving list of campaigns.",
+      "error"
+    );
+  }
+}

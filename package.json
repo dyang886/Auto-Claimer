@@ -32,6 +32,5 @@
     "electron-builder": "^24.9.1"
   },
   "dependencies": {
-    "electron-squirrel-startup": "^1.0.0"
   }
 }

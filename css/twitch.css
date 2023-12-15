@@ -8,3 +8,91 @@
 #home {
   width: 50%;
 }
+
+#campaignList label {
+  font-weight: bold;
+  font-size: larger;
+  color: rgb(5, 5, 181);
+}
+
+#campaigns {
+  /* display: flex; */
+  display: none;
+  flex-direction: column;
+  box-sizing: border-box;
+  padding: 50px;
+  height: 100vh;
+  gap: 20px;
+}
+
+#campaignList {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  justify-items: center;
+  gap: 10px;
+  overflow: auto;
+  border: 2px solid purple;
+  border-radius: 15px;
+  padding: 10px;
+}
+
+#campaignProgress {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+#openCampaigns,
+#selectedCampaigns {
+  gap: 8px;
+  height: 100%;
+  padding: 10px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  overflow: auto;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+.gameSelection {
+  word-break: break-word;
+  white-space: normal;
+  text-align: center;
+  font-family: Arial, Helvetica, sans-serif;
+  padding: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 10px;
+  background-color: rgba(255, 255, 255, 0.45);
+  box-shadow: 0 0 10px 1px rgba(0, 0, 0, 0.25);
+  animation: fadeInLeft 0.5s;
+}
+
+#openCampaigns .gameSelection:active {
+  transform: scale(0.96);
+}
+
+#openCampaigns .gameSelection {
+  cursor: pointer;
+}
+
+#selectedCampaigns .gameSelection {
+  cursor: default;
+}
+
+.fa-solid.fa-arrow-right,
+.fa-solid.fa-xmark {
+  margin: 0px 0px 0px 10px;
+}
+
+.fa-solid.fa-arrow-right {
+  color: rgb(0, 161, 0);
+}
+
+.fa-solid.fa-xmark {
+  color: red;
+}

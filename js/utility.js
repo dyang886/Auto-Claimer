@@ -59,8 +59,15 @@ function showRetryButton() {
 }
 
 function showHomeButton() {
-  const retryButton = document.getElementById("home");
-  if (retryButton) {
-    retryButton.style.display = "block";
+  const homeButton = document.getElementById("home");
+  if (homeButton) {
+    homeButton.style.display = "block";
+  }
+}
+
+function hideHomeButton() {
+  const homeButton = document.getElementById("home");
+  if (homeButton) {
+    homeButton.style.display = "none";
   }
 }

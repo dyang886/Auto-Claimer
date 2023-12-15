@@ -1,6 +1,7 @@
 window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("retryButton").addEventListener("click", (event) => {
     event.target.style.display = "none";
+    hideHomeButton();
     showLoader();
     checkSession();
   });

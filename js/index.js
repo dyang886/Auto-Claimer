@@ -47,8 +47,8 @@ window.api.receive("login-status", (status) => {
           <h3>${serviceName}: </h3>
           ${
             isLoggedIn
-              ? `<button class="dangerButton" id="${buttonId}">Log Out</button>`
-              : `<h3 class="status">Logged Out</h3>`
+              ? `<button class="dangerButton" id="${buttonId}"><i class="fas fa-sign-out"></i>Log Out</button>`
+              : `<h3 class="status"><i class="fas fa-user-slash"></i>Logged Out</h3>`
           }
         </div>`;
 
