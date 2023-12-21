@@ -1,19 +1,24 @@
-const { screen, app, BrowserWindow, ipcMain, session } = require("electron");
-const path = require("node:path");
+const {
+  screen,
+  app,
+  BrowserWindow,
+  ipcMain,
+  session,
+  powerSaveBlocker,
+  Notification,
+} = require("electron");
+const fs = require("fs");
+const path = require("path");
 
 let win;
 
 const createWindow = () => {
   const primaryDisplay = screen.getPrimaryDisplay();
-  const scaleFactor = primaryDisplay.scaleFactor;
-  const scaledDimensions = primaryDisplay.size;
-
-  const actualWidth = scaledDimensions.width * scaleFactor;
-  const actualHeight = scaledDimensions.height * scaleFactor;
+  const dimensions = primaryDisplay.size;
 
   win = new BrowserWindow({
-    width: actualWidth * 0.25,
-    height: actualHeight * 0.3,
+    width: dimensions.width * 0.4,
+    height: dimensions.height * 0.5,
     icon: path.join(__dirname, "assets/logo.ico"),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -40,6 +45,57 @@ app.whenReady().then(() => {
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  });
+});
+
+// ======================================================================
+// Settings module
+// ======================================================================
+ipcMain.on("save-settings", async (event, key, value) => {
+  const userDataPath = app.getPath("userData");
+  const settingsPath = path.join(
+    userDataPath,
+    "AutoClaimer Settings",
+    "settings.json"
+  );
+
+  fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+
+  fs.readFile(settingsPath, (readErr, data) => {
+    let settings = {};
+
+    if (!readErr) {
+      settings = JSON.parse(data);
+    }
+    settings[key] = value;
+
+    fs.writeFile(settingsPath, JSON.stringify(settings), (writeErr) => {
+      if (writeErr) {
+        console.error("Error saving settings:", writeErr);
+      } else {
+        console.log("Settings updated successfully");
+      }
+    });
+  });
+});
+
+ipcMain.on("load-settings", (event, key) => {
+  const userDataPath = app.getPath("userData");
+  const settingsPath = path.join(
+    userDataPath,
+    "AutoClaimer Settings",
+    "settings.json"
+  );
+
+  fs.readFile(settingsPath, (err, data) => {
+    if (err) {
+      console.error("Error loading settings:", err);
+      event.reply("settings-value", null);
+    } else {
+      const settings = JSON.parse(data);
+      const value = settings[key];
+      event.reply("settings-value", value);
+    }
   });
 });
 
@@ -113,10 +169,6 @@ function createLoginWindow(serviceUrl) {
   if (serviceUrl.includes("amazon.com")) {
     getAmazonLoginUrl(serviceUrl, (loginUrl) => {
       if (loginUrl) {
-        win.webContents.send(
-          "message-from-main",
-          "Login window opened, please wait for the page to load..."
-        );
         openLoginWindow(loginUrl);
       } else {
         ipcMainEvent.reply("session-status", false);
@@ -125,10 +177,6 @@ function createLoginWindow(serviceUrl) {
 
     // Twitch
   } else if (serviceUrl.includes("twitch.tv")) {
-    win.webContents.send(
-      "message-from-main",
-      "Login window opened, please wait for the page to load..."
-    );
     openLoginWindow("https://www.twitch.tv/login");
   }
 }
@@ -138,22 +186,33 @@ function openLoginWindow(loginUrl) {
   const loginWindow = new BrowserWindow({
     width: 500,
     height: 600,
+    show: false,
   });
 
   loginWindow.loadURL(loginUrl);
   let isLoginWindowDestroyedProgrammatically = false;
   let loginHandled = false;
 
-  loginWindow.webContents.on("did-finish-load", () => {
+  loginWindow.webContents.once("did-finish-load", () => {
+    loginWindow.show();
+    loginWindow.webContents.reload();
+    win.webContents.send("message-from-main", "Login window opened.");
+
     // Delete twitch login privacy window
     if (loginUrl.includes("twitch.tv")) {
       loginWindow.webContents.executeJavaScript(`
-        setInterval(() => {
-          const privacy = document.querySelector('div.Layout-sc-1xcs6mc-0.gUvyVO');
-          if (privacy) {
-            privacy.remove();
+        const observer = new MutationObserver(mutations => {
+          for (const mutation of mutations) {
+            if (mutation.addedNodes.length) {
+              const privacy = document.querySelector('div.kclbMN.consent-banner');
+              if (privacy) {
+                privacy.remove();
+              }
+            }
           }
-        }, 500);
+        });
+    
+        observer.observe(document.body, { childList: true, subtree: true });
       `);
     }
   });
@@ -265,7 +324,10 @@ ipcMain.on("amazon-claim", async (event) => {
     "Retrieving list of items to claim..."
   );
 
-  amazonWindow.webContents.on("did-finish-load", () => {
+  amazonWindow.webContents.once("did-finish-load", () => {
+    console.log("Finished loading amazon home page.");
+    amazonWindow.webContents.reload();
+
     // Find all .tw-block with a claim button
     amazonWindow.webContents
       .executeJavaScript(
@@ -444,36 +506,52 @@ function claimNextItem(game, claimList, claimWindow, index = 0) {
 // ======================================================================
 // Twitch claim process
 // ======================================================================
-ipcMain.on("twitch-claim", async (event) => {
-  let twitchWindow = new BrowserWindow({
+let streamWindow = null;
+let statusWindow = null;
+
+ipcMain.on("open-twitch-windows", async (event) => {
+  statusWindow = new BrowserWindow({
     width: 1280,
     height: 720,
-    show: false,
+    // show: false,
   });
+  statusWindow.loadURL("https://www.twitch.tv/drops/inventory");
 
-  twitchWindow.loadURL("https://www.twitch.tv/drops/campaigns");
+  streamWindow = new BrowserWindow({
+    width: 1280,
+    height: 720,
+    // show: false,
+  });
+});
+
+ipcMain.on("twitch-claim", async (event) => {
   win.webContents.send(
     "message-from-main",
     "Retrieving list of open campaigns..."
   );
+  const twitchList = await getTwitchCampaigns();
 
-  twitchWindow.webContents.on("did-finish-load", async () => {
-    const twitchList = await getTwitchCampaigns(twitchWindow);
+  if (twitchList) {
     win.webContents.send(
       "message-from-main",
       "Please select games that you want to claim."
     );
     win.webContents.send(
       "message-from-main",
-      "Your selection will be saved for future sessions."
+      "Your selections will be saved for future sessions."
     );
     win.webContents.send("message-from-main", "hideLoader");
-    const gameNames = twitchList.map(game => game.GameName);
-    win.webContents.send("display-campaigns", gameNames);
-  });
+    win.webContents.send("display-campaigns", twitchList, true);
+  } else {
+    win.webContents.send(
+      "message-from-main",
+      "Error retrieving list of campaigns.",
+      "error"
+    );
+  }
 });
 
-async function getTwitchCampaigns(twitchWindow) {
+async function getTwitchCampaigns() {
   // result format:
   // result = [
   //   {
@@ -491,91 +569,466 @@ async function getTwitchCampaigns(twitchWindow) {
   //     Connected: isConnected
   //   }
   // ]
-  try {
-    const result = await twitchWindow.webContents.executeJavaScript(`
-      new Promise((resolve, reject) => {
-        let mutationTimeout;
-        const observer = new MutationObserver(() => {
-          clearTimeout(mutationTimeout);
+  return new Promise((resolve) => {
+    let twitchWindow = new BrowserWindow({
+      width: 1280,
+      height: 720,
+      show: false,
+    });
 
-          mutationTimeout = setTimeout(() => {
-            const dropDivs = document.querySelectorAll('.Layout-sc-1xcs6mc-0.ivrFkx + .Layout-sc-1xcs6mc-0');
-            const container = Array.from(dropDivs).find(div => div.getAttribute('class') === 'Layout-sc-1xcs6mc-0');
-            const gameDivs = container.querySelectorAll(':scope > .Layout-sc-1xcs6mc-0');
-            if (gameDivs.length > 0) {
-              observer.disconnect();
-              let gamesList = [];
+    twitchWindow.loadURL("https://www.twitch.tv/drops/campaigns");
 
-              // Loop through each game campaign
-              gameDivs.forEach(gameDiv => {
-                const gameName = gameDiv.querySelector('h3').textContent;
-                const rewardsDiv = gameDiv.querySelector('.cRPebU > .Layout-sc-1xcs6mc-0') 
-                                || gameDiv.querySelector('.dyXzMr > .Layout-sc-1xcs6mc-0');
-                const rewardsChildren = rewardsDiv.querySelectorAll(':scope > .Layout-sc-1xcs6mc-0:not(.hmbWfq)');
-                let rewardsList = [];
+    twitchWindow.webContents.once("did-finish-load", async () => {
+      console.log("Finished loading Twitch campaigns.");
+      twitchWindow.webContents.reload();
 
-                // Loop through each reward for one campaign
-                rewardsChildren.forEach(childDiv => {
-                  const rewardName = childDiv.querySelector('p.CoreText-sc-1txzju1-0').textContent;
-                  const itemStreamDiv = childDiv.querySelector('.tw-typeset');
-                  const itemStreamElements = itemStreamDiv.querySelectorAll('li');
-                  let itemsList = [];
-                  let streamLinks = [];
-
-                  itemStreamElements.forEach(li => {
-                    const span = li.querySelector('span');
-                    if (span) {
-                      itemsList.push(span.textContent.trim());
-                    }
-
-                    const streams = li.querySelectorAll('a');
-                    streams.forEach(a => {
-                      const text = a.textContent.trim();
-                      if (text.toLowerCase() === 'more' || text.toLowerCase() === 'a participating live channel') {
-                        streamLinks.push({ 'more': a.href });
-                      } else {
-                        streamLinks.push(a.href);
-                      }
+      try {
+        const result = await twitchWindow.webContents.executeJavaScript(`
+          new Promise((resolve, reject) => {
+            let mutationTimeout;
+            const observer = new MutationObserver(() => {
+              clearTimeout(mutationTimeout);
+    
+              mutationTimeout = setTimeout(() => {
+                const dropDivs = document.querySelectorAll('.Layout-sc-1xcs6mc-0.ivrFkx + .Layout-sc-1xcs6mc-0');
+                const container = Array.from(dropDivs).find(div => div.getAttribute('class') === 'Layout-sc-1xcs6mc-0');
+                const gameDivs = container.querySelectorAll(':scope > .Layout-sc-1xcs6mc-0');
+                if (gameDivs.length > 0) {
+                  observer.disconnect();
+                  let gamesList = [];
+    
+                  // Loop through each game campaign
+                  gameDivs.forEach(gameDiv => {
+                    const gameName = gameDiv.querySelector('h3').textContent;
+                    const rewardsDiv = gameDiv.querySelector('.cRPebU > .Layout-sc-1xcs6mc-0') 
+                                    || gameDiv.querySelector('.dyXzMr > .Layout-sc-1xcs6mc-0');
+                    const rewardsChildren = rewardsDiv.querySelectorAll(':scope > .Layout-sc-1xcs6mc-0:not(.hmbWfq)');
+                    let rewardsList = [];
+    
+                    // Loop through each reward for one campaign
+                    rewardsChildren.forEach(childDiv => {
+                      const rewardName = childDiv.querySelector('p.CoreText-sc-1txzju1-0').textContent;
+                      const itemStreamDiv = childDiv.querySelector('.tw-typeset');
+                      const itemStreamElements = itemStreamDiv.querySelectorAll('li');
+                      let itemsList = [];
+                      let streamLinks = [];
+    
+                      itemStreamElements.forEach(li => {
+                        const span = li.querySelector('span');
+                        if (span) {
+                          itemsList.push(span.textContent.trim());
+                        }
+    
+                        const streams = li.querySelectorAll('a');
+                        streams.forEach(a => {
+                          const text = a.textContent.trim();
+                          if (text.toLowerCase() === 'more' || text.toLowerCase() === 'a participating live channel') {
+                            streamLinks.push({ 'more': a.href });
+                          } else {
+                            streamLinks.push(a.href);
+                          }
+                        });
+                      });
+    
+                      rewardsList.push({
+                        [rewardName]: {
+                          ItemList: itemsList,
+                          StreamList: streamLinks
+                        }
+                      });
+                    });
+    
+                    const connectedSpan = gameDiv.querySelector('span.tw-pill');
+                    const isConnected = connectedSpan ? true : false;
+    
+                    gamesList.push({
+                      GameName: gameName,
+                      RewardsList: rewardsList,
+                      Connected: isConnected
                     });
                   });
+    
+                  resolve(gamesList);
+                }
+              }, 1000);
+            });
+    
+            observer.observe(document.body, { childList: true, subtree: true });
+          })
+        `);
+        console.log("Retrieved Twitch campaign list.");
+        twitchWindow.close();
+        // console.log(JSON.stringify(result));
+        resolve(result);
+      } catch (error) {
+        console.error("JavaScript execution failed:", error);
+        twitchWindow.close();
+        resolve(null);
+      }
+    });
+  });
+}
 
-                  rewardsList.push({
-                    [rewardName]: {
-                      ItemList: itemsList,
-                      StreamList: streamLinks
-                    }
-                  });
-                });
+ipcMain.on("start-claim", async (event, gameName, rewardName) => {
+  startClaim(gameName, rewardName);
+});
 
-                const connectedSpan = gameDiv.querySelector('span.tw-pill');
-                const isConnected = connectedSpan ? true : false;
+async function startClaim(gameName, rewardName) {
+  const id = powerSaveBlocker.start("prevent-app-suspension");
+  console.log(
+    powerSaveBlocker.isStarted(id)
+      ? "Power Save Blocker is active."
+      : "Power Save Blocker is inactive."
+  );
+  win.webContents.send(
+    "message-from-main",
+    "Validating reward availability..."
+  );
+  const twitchList = await getTwitchCampaigns();
 
-                gamesList.push({
-                  GameName: gameName,
-                  RewardsList: rewardsList,
-                  Connected: isConnected
-                });
-              });
+  if (twitchList) {
+    win.webContents.send("display-campaigns", twitchList, false);
+    const selectedGame = twitchList.find((game) => game.GameName === gameName);
+    if (selectedGame) {
+      const selectedReward = selectedGame.RewardsList.find(
+        (reward) => Object.keys(reward)[0] === rewardName
+      );
+      if (selectedReward) {
+        const streamLinks = selectedReward[rewardName].StreamList;
+        const targetLink = await getValidStreamLink(streamLinks);
+        if (targetLink) {
+          console.log("Active streamer: " + targetLink);
+          win.webContents.send(
+            "message-from-main",
+            "Found available streamer, started claiming..."
+          );
+          if (streamWindow.rewardName !== rewardName) {
+            streamWindow.rewardName = rewardName;
+          } else {
+            powerSaveBlocker.stop(id);
+            win.webContents.send(
+              "reward-status",
+              "enableClaim",
+              null,
+              null,
+              null,
+              null
+            );
+            win.webContents.send(
+              "message-from-main",
+              `Claiming already in progress: ${rewardName}`,
+              "error"
+            );
+            return;
+          }
 
-              resolve(gamesList);
+          streamWindow.loadURL(targetLink);
+          streamWindow.webContents.setAudioMuted(true);
+          streamWindow.webContents.once("did-finish-load", async () => {
+            streamWindow.webContents.reload();
+            const result = await updateRewardStatus(gameName, rewardName);
+            if (result === "success") {
+              win.webContents.send(
+                "message-from-main",
+                `Successfully claimed all items for ${rewardName}.`,
+                "success"
+              );
+            } else {
+              win.webContents.send(
+                "message-from-main",
+                `Claiming terminated for ${rewardName}: ${result}`,
+                "error"
+              );
             }
-          }, 1000);
-        });
-
-        observer.observe(document.body, { childList: true, subtree: true });
-      })
-    `);
-    console.log("Retrieved twitch campaign list.");
-    // const resultString = JSON.stringify(result, null, 2);
-    // console.log(resultString);
-    twitchWindow.close();
-    return result;
-  } catch (error) {
-    console.error("JavaScript execution failed:", error);
+          });
+        } else {
+          win.webContents.send(
+            "message-from-main",
+            `No active streamers found for ${rewardName}.`,
+            "error"
+          );
+        }
+      } else {
+        win.webContents.send(
+          "message-from-main",
+          `No rewards found for ${rewardName}.`,
+          "error"
+        );
+      }
+    } else {
+      win.webContents.send(
+        "message-from-main",
+        `${gameName} currently has no open campaigns.`,
+        "error"
+      );
+    }
+  } else {
     win.webContents.send(
       "message-from-main",
       "Error retrieving list of campaigns.",
       "error"
     );
   }
+  powerSaveBlocker.stop(id);
+  win.webContents.send("reward-status", "enableClaim", null, null, null, null);
+}
+
+async function getValidStreamLink(streamLinks) {
+  for (const linkInfo of streamLinks) {
+    const link = linkInfo.more || linkInfo;
+    const result = await checkStreamStatus(link, !!linkInfo.more);
+    if (result && result !== "continue" && result !== "error") {
+      return result;
+    }
+    console.log(
+      result === "continue"
+        ? `Streamer unavailable: ${link}`
+        : `Error checking streamer status: ${link}`
+    );
+  }
+  return "";
+}
+
+async function checkStreamStatus(link, isMoreCase) {
+  let checkStreamWindow = new BrowserWindow({
+    width: 1280,
+    height: 720,
+    show: false,
+  });
+
+  return new Promise((resolve) => {
+    checkStreamWindow.loadURL(link);
+    checkStreamWindow.webContents.setAudioMuted(true);
+
+    checkStreamWindow.webContents.once("did-finish-load", async () => {
+      checkStreamWindow.webContents.reload();
+
+      try {
+        const result = await checkStreamWindow.webContents.executeJavaScript(`
+          new Promise(resolve => {
+            const observer = new MutationObserver(mutations => {
+              for (const mutation of mutations) {
+                if (mutation.addedNodes.length) {
+                  if (${isMoreCase}) {
+                    const joinStreamButton = document.querySelector('a.ScCoreButton-sc-ocjdkq-0.ScCoreButtonPrimary-sc-ocjdkq-1');
+                    const noResultsFound = [...document.querySelectorAll('h3.tw-title')].find(h3 => h3.textContent.trim() === "No results found");
+                    if (joinStreamButton) {
+                      observer.disconnect();
+                      resolve(joinStreamButton.href); // Return the href of the join stream button
+                    } else if (noResultsFound) {
+                      observer.disconnect();
+                      resolve('continue'); // No results found, continue to the next link
+                    }
+                  } else {
+                    const offlineIndicator = document.querySelector('div.home-offline-hero');
+                    const liveTimeIndicator = document.querySelector('span.live-time');
+                    if (offlineIndicator) {
+                      observer.disconnect();
+                      resolve('continue'); // Stream is offline, continue to the next link
+                    } else if (liveTimeIndicator) {
+                      observer.disconnect();
+                      resolve(\`${link}\`); // Stream is live, return the link
+                    }
+                  }
+                }
+              }
+            });
+
+            observer.observe(document.body, { childList: true, subtree: true });
+          })
+        `);
+        checkStreamWindow.close();
+        resolve(result);
+      } catch (error) {
+        console.error("JavaScript execution failed:", error);
+        checkStreamWindow.close();
+        resolve("error");
+      }
+    });
+  });
+}
+
+async function updateRewardStatus(gameName, rewardName) {
+  let success = false;
+  let rewardAppears = null;
+  let loopCount = 0;
+  let interval;
+
+  return new Promise((resolve, reject) => {
+    const checkRewards = async () => {
+      try {
+        loopCount++;
+        statusWindow.reload();
+        // result = {
+        //   rewardAvailable,  // if there's at least one ongoing progress shown
+        //   longestMinute,    // longest minute among all reward items
+        //   percentage,       // percentage for the item with longest minute
+        //   claimed           // a list of item names claimed
+        // }
+
+        const result = await statusWindow.webContents.executeJavaScript(`
+            new Promise((resolve) => {
+              let mutationTimeout;
+              const observer = new MutationObserver(() => {
+                clearTimeout(mutationTimeout);
+    
+                mutationTimeout = setTimeout(() => {
+                  observer.disconnect();
+                  let rewardAvailable = false;
+                  let longestMinute = -1;
+                  let percentage = -1;
+                  let claimed = [];
+
+                  const onGoingRewards = document.querySelectorAll('.Layout-sc-1xcs6mc-0.ilRKfU');
+                  onGoingRewards.forEach((rewardBlock) => {
+                    let rewardDiv = Array.from(rewardBlock.querySelectorAll('a.tw-link')).some(anchor => anchor.textContent.trim() === "${rewardName}");
+                    if (rewardDiv) {
+                      rewardAvailable = true;
+                      const items = rewardBlock.querySelectorAll('.Layout-sc-1xcs6mc-0.kBihNt');
+                      items.forEach((item) => {
+                        const progressBar = item.querySelector('.Layout-sc-1xcs6mc-0.iHJIAl');
+                        if (progressBar) {
+                          let pContent = progressBar.querySelector('.CoreText-sc-1txzju1-0').textContent.trim();
+                          let parts = pContent.split(' ');
+                          let pPercent = parseInt(parts[0], 10);
+                          let timeInMinutes = 0;
+
+                          for (let i = 1; i < parts.length; i++) {
+                              if (parts[i].startsWith('hour')) {
+                                  timeInMinutes += parseInt(parts[i - 1], 10) * 60; // Convert hours to minutes
+                              } else if (parts[i].startsWith('min')) {
+                                  timeInMinutes += parseInt(parts[i - 1], 10); // Already minutes
+                              }
+                          }
+
+                          if (timeInMinutes > longestMinute) {
+                              longestMinute = timeInMinutes;
+                              percentage = pPercent;
+                          }
+                        }
+
+                        const itemName = item.querySelector('p.CoreText-sc-1txzju1-0.jfZuWl').textContent;
+                        const claimButton = item.querySelector('button div[data-a-target="tw-core-button-label-text"]');
+                        if (claimButton) {
+                          claimed.push(itemName);
+                          claimButton.click();
+                        }
+                      });
+                    }
+                  });
+
+                  if (longestMinute === -1 || percentage === -1) {
+                    rewardAvailable = false;
+                  }
+                  resolve({ rewardAvailable, longestMinute, percentage, claimed });
+                }, 1000);
+              });
+        
+              observer.observe(document.body, { childList: true, subtree: true });
+            });
+          `);
+
+        console.log(result);
+        if (
+          rewardAppears === null &&
+          (result.rewardAvailable || result.claimed.length !== 0)
+        ) {
+          rewardAppears = true;
+        }
+        if (rewardAppears) {
+          // success: Boolean  // if the div with rewardName disappears
+          success = await statusWindow.webContents.executeJavaScript(`
+            new Promise((resolve) => {
+              const rewardExists = Array.from(document.querySelectorAll('a.tw-link')).some(anchor => anchor.textContent.trim() === "${rewardName}");
+              resolve(!rewardExists);
+            });
+          `);
+        }
+
+        const offline = await streamWindow.webContents.executeJavaScript(`
+          new Promise((resolve) => {
+            const offlineElement = document.querySelector('.offline-recommendations-video-card-border-2');
+            resolve(!!offlineElement);
+          });
+        `);
+        if (offline) {
+          rewardAppears = null;
+        }
+
+        if (streamWindow.rewardName !== rewardName) {
+          clearInterval(interval);
+          resolve("A new reward claiming is in progress.");
+          return;
+        }
+        if (result.rewardAvailable) {
+          win.webContents.send(
+            "reward-status",
+            "update",
+            result.percentage,
+            result.longestMinute,
+            gameName,
+            rewardName
+          );
+        }
+        if (result.claimed) {
+          result.claimed.forEach((itemName) => {
+            win.webContents.send(
+              "message-from-main",
+              `Successfully claimed ${itemName}.`,
+              "success"
+            );
+          });
+        }
+
+        // success
+        if (success && rewardAppears) {
+          clearInterval(interval);
+          streamWindow.rewardName = "";
+          win.webContents.send(
+            "reward-status",
+            "update",
+            100,
+            null,
+            gameName,
+            rewardName
+          );
+
+          let notification = new Notification({
+            title: "All items claimed!",
+            body: `Successfully claimed ${rewardName} for ${gameName}.`,
+            icon: path.join(__dirname, "assets/logo.png"),
+          });
+          notification.show();
+          resolve("success");
+
+          // unavailable
+        } else if ((!result.rewardAvailable || offline) && !rewardAppears) {
+          if (loopCount > 1) {
+            clearInterval(interval);
+            streamWindow.rewardName = "";
+            if (!result.rewardAvailable) {
+              resolve("Reward is already claimed or closed.");
+            } else if (offline) {
+              startClaim(gameName, rewardName);
+              resolve("Streamer went offline, finding a new one...");
+            }
+          }
+        }
+      } catch (error) {
+        clearInterval(interval);
+        console.error("Error updating reward progress:", error);
+      }
+    };
+
+    checkRewards();
+    win.webContents.send(
+      "reward-status",
+      "enableClaim",
+      null,
+      null,
+      null,
+      null
+    );
+    interval = setInterval(checkRewards, 60000);
+  });
 }
