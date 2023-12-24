@@ -35,16 +35,22 @@
 
 /* General for all pages */
 #terminal {
-  display: grid;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 20px;
 }
 
 #outerTerminalWindow {
   box-shadow: rgba(151, 65, 252, 0.2) 0 15px 30px -5px;
   background-image: linear-gradient(144deg, #af40ff, #5b42f3 50%, #00ddeb);
   border-radius: 20px;
-  margin: auto 20px auto 20px;
-  height: 60vh;
+  margin: 0px 20px 0px 20px;
+  height: 70vh;
   padding: 5px;
+  width: 90%;
+  box-sizing: border-box;
 }
 
 #innerTerminalWindow {

@@ -9,6 +9,11 @@
   width: 50%;
 }
 
+#permaHome {
+  display: none;
+  width: 90%;
+}
+
 #campaignList label {
   font-weight: bold;
   font-size: larger;

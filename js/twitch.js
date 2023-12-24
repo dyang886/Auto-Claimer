@@ -13,7 +13,12 @@ window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("home").addEventListener("click", function () {
     window.location.href = "../index.html";
   });
+  // home button after displaying campaigns
+  document.getElementById("permaHome").addEventListener("click", function () {
+    window.location.href = "../index.html";
+  });
 
+  // add game from open campaigns to selected
   document
     .getElementById("openCampaigns")
     .addEventListener("click", function (event) {
@@ -24,6 +29,8 @@ window.addEventListener("DOMContentLoaded", () => {
       }
     });
 
+  // remove from selected campaigns if xmark is clicked
+  // display rewards if right arrow is clicked
   document
     .getElementById("selectedCampaigns")
     .addEventListener("click", function (event) {
@@ -74,6 +81,7 @@ window.api.receive("display-campaigns", (twitchList, load) => {
     hideLoader();
     loadSelected();
     document.getElementById("campaigns").style.display = "flex";
+    document.getElementById("permaHome").style.display = "block";
   }
   campaigns = twitchList;
   const gameNames = twitchList.map((game) => game.GameName);
@@ -84,6 +92,7 @@ window.api.receive("display-campaigns", (twitchList, load) => {
   });
 });
 
+// add game to selected campaigns
 function addSelected(gameName) {
   const selectedDiv = document.getElementById("selectedCampaigns");
 
@@ -105,6 +114,7 @@ function addSelected(gameName) {
   selectedDiv.appendChild(newGameDiv);
 }
 
+// save all selected campaigns to settings.json
 function saveSelected() {
   const selectedDiv = document.getElementById("selectedCampaigns");
   const games = Array.from(
@@ -114,10 +124,12 @@ function saveSelected() {
   window.api.send("save-settings", "twitchSelectedGames", games);
 }
 
+// load twitchSelectedGames from settings.json
 function loadSelected() {
   window.api.send("load-settings", "twitchSelectedGames");
 }
 
+// add each game from twitchSelectedGames in settings.json to selected campaigns
 window.api.receive("settings-value", (games) => {
   if (games) {
     games.forEach((gameName) => {
@@ -126,6 +138,7 @@ window.api.receive("settings-value", (games) => {
   }
 });
 
+// display rewards overlay when right arrow is clicked
 function displayRewards(gameName) {
   const game = campaigns.find((g) => g.GameName === gameName);
   const rewardsDiv = document.getElementById("rewardsList");
@@ -170,14 +183,15 @@ function displayRewards(gameName) {
         rewardsDiv.appendChild(rewardContainer);
       }
     });
-
     document.getElementById("rewardsOverlay").style.display = "flex";
+
   } else {
     rewardsDiv.innerHTML = `<strong>No rewards currently available.</strong>`;
     document.getElementById("rewardsOverlay").style.display = "flex";
   }
 }
 
+// disable right arrows for each game in selected campaigns
 function disableClaim() {
   isClaimEnabled = false;
   document.querySelectorAll(".fa-arrow-right").forEach((rightArrow) => {
@@ -206,6 +220,7 @@ function enableClaim() {
   }
 }
 
+// update claim progress
 window.api.receive(
   "reward-status",
   (status, percentage, minutes, gameName, rewardName) => {

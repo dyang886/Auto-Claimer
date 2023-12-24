@@ -7,6 +7,7 @@ const {
   powerSaveBlocker,
   Notification,
 } = require("electron");
+
 const fs = require("fs");
 const path = require("path");
 
@@ -364,7 +365,8 @@ ipcMain.on("amazon-claim", async (event) => {
       `
       )
       .then((result) => {
-        console.log(result);
+        // console.log(result);
+        console.log("Retrieved Amazon rewards list.");
         win.webContents.send("message-from-main", "Claiming in progress...");
         win.webContents.send("message-from-main", "hideLoader");
         amazonWindow.close();
@@ -506,24 +508,32 @@ function claimNextItem(game, claimList, claimWindow, index = 0) {
 // ======================================================================
 // Twitch claim process
 // ======================================================================
-let streamWindow = null;
-let statusWindow = null;
+let streamWindow = null; // display an active streamer streaming the target game
+let statusWindow = null; // display the twitch inventory page to check and update reward progress
+let currentCampaigns = []; // list of onGoing rewardName
+let psBlocker; // prevent machine from sleeping during claiming
 
+// open the two windows after successful login
 ipcMain.on("open-twitch-windows", async (event) => {
-  statusWindow = new BrowserWindow({
-    width: 1280,
-    height: 720,
-    // show: false,
-  });
-  statusWindow.loadURL("https://www.twitch.tv/drops/inventory");
+  if (!statusWindow) {
+    statusWindow = new BrowserWindow({
+      width: 1280,
+      height: 720,
+      show: false,
+    });
+    statusWindow.loadURL("https://www.twitch.tv/drops/inventory");
+  }
 
-  streamWindow = new BrowserWindow({
-    width: 1280,
-    height: 720,
-    // show: false,
-  });
+  if (!streamWindow) {
+    streamWindow = new BrowserWindow({
+      width: 1280,
+      height: 720,
+      show: false,
+    });
+  }
 });
 
+// display the campaign selection blocks, run once after successful login
 ipcMain.on("twitch-claim", async (event) => {
   win.webContents.send(
     "message-from-main",
@@ -551,6 +561,7 @@ ipcMain.on("twitch-claim", async (event) => {
   }
 });
 
+// return a result object as specified below
 async function getTwitchCampaigns() {
   // result format:
   // result = [
@@ -612,7 +623,8 @@ async function getTwitchCampaigns() {
                       const itemStreamElements = itemStreamDiv.querySelectorAll('li');
                       let itemsList = [];
                       let streamLinks = [];
-    
+                      
+                      // <li> contains item names and streamer links
                       itemStreamElements.forEach(li => {
                         const span = li.querySelector('span');
                         if (span) {
@@ -673,13 +685,8 @@ ipcMain.on("start-claim", async (event, gameName, rewardName) => {
   startClaim(gameName, rewardName);
 });
 
+// start claiming process after the button from rewards overlay is clicked
 async function startClaim(gameName, rewardName) {
-  const id = powerSaveBlocker.start("prevent-app-suspension");
-  console.log(
-    powerSaveBlocker.isStarted(id)
-      ? "Power Save Blocker is active."
-      : "Power Save Blocker is inactive."
-  );
   win.webContents.send(
     "message-from-main",
     "Validating reward availability..."
@@ -687,25 +694,30 @@ async function startClaim(gameName, rewardName) {
   const twitchList = await getTwitchCampaigns();
 
   if (twitchList) {
+    // refresh open campaigns
     win.webContents.send("display-campaigns", twitchList, false);
     const selectedGame = twitchList.find((game) => game.GameName === gameName);
+
     if (selectedGame) {
       const selectedReward = selectedGame.RewardsList.find(
         (reward) => Object.keys(reward)[0] === rewardName
       );
+
       if (selectedReward) {
         const streamLinks = selectedReward[rewardName].StreamList;
         const targetLink = await getValidStreamLink(streamLinks);
+
         if (targetLink) {
           console.log("Active streamer: " + targetLink);
           win.webContents.send(
             "message-from-main",
             "Found available streamer, started claiming..."
           );
+
+          // the newest rewardName is set as an attribute for streamWindow so that old rewards will be terminated
           if (streamWindow.rewardName !== rewardName) {
             streamWindow.rewardName = rewardName;
           } else {
-            powerSaveBlocker.stop(id);
             win.webContents.send(
               "reward-status",
               "enableClaim",
@@ -721,11 +733,39 @@ async function startClaim(gameName, rewardName) {
             );
             return;
           }
+          // prevent duplicate claims
+          if (!currentCampaigns.includes(rewardName)) {
+            currentCampaigns.push(rewardName);
+          } else {
+            win.webContents.send(
+              "reward-status",
+              "enableClaim",
+              null,
+              null,
+              null,
+              null
+            );
+            win.webContents.send(
+              "message-from-main",
+              `Claiming already in progress: ${rewardName}`,
+              "error"
+            );
+            return;
+          }
+          console.log("\nCurrent campaigns:", currentCampaigns);
 
           streamWindow.loadURL(targetLink);
           streamWindow.webContents.setAudioMuted(true);
           streamWindow.webContents.once("did-finish-load", async () => {
             streamWindow.webContents.reload();
+            psBlocker = powerSaveBlocker.start("prevent-app-suspension");
+            console.log(
+              powerSaveBlocker.isStarted(psBlocker)
+                ? "Power Save Blocker is active."
+                : "Power Save Blocker is inactive."
+            );
+
+            // start claiming loop
             const result = await updateRewardStatus(gameName, rewardName);
             if (result === "success") {
               win.webContents.send(
@@ -769,10 +809,10 @@ async function startClaim(gameName, rewardName) {
       "error"
     );
   }
-  powerSaveBlocker.stop(id);
   win.webContents.send("reward-status", "enableClaim", null, null, null, null);
 }
 
+// get an active streamer link if available
 async function getValidStreamLink(streamLinks) {
   for (const linkInfo of streamLinks) {
     const link = linkInfo.more || linkInfo;
@@ -848,24 +888,25 @@ async function checkStreamStatus(link, isMoreCase) {
   });
 }
 
+// main claiming loop
 async function updateRewardStatus(gameName, rewardName) {
-  let success = false;
-  let rewardAppears = null;
-  let loopCount = 0;
-  let interval;
+  let success = false; // if the div with target rewardName disappears, meaning all items have been claimed
+  let rewardAppears = null; // set to true if the target rewardName ever appears
+  let loopCount = 0; // number of loops count
+  let interval; // interval/loop object
 
   return new Promise((resolve, reject) => {
     const checkRewards = async () => {
       try {
         loopCount++;
         statusWindow.reload();
+
         // result = {
         //   rewardAvailable,  // if there's at least one ongoing progress shown
         //   longestMinute,    // longest minute among all reward items
         //   percentage,       // percentage for the item with longest minute
         //   claimed           // a list of item names claimed
         // }
-
         const result = await statusWindow.webContents.executeJavaScript(`
             new Promise((resolve) => {
               let mutationTimeout;
@@ -928,15 +969,19 @@ async function updateRewardStatus(gameName, rewardName) {
             });
           `);
 
+        console.log(`\n${gameName}: ${rewardName}`);
         console.log(result);
+
+        // if reward is available and rewardAppears is null, set it to true, rewardAppears will then always be true unless streamer offline
         if (
           rewardAppears === null &&
           (result.rewardAvailable || result.claimed.length !== 0)
         ) {
           rewardAppears = true;
         }
+
+        // if reward ever appears but then disappears, then it means all items have been claimed
         if (rewardAppears) {
-          // success: Boolean  // if the div with rewardName disappears
           success = await statusWindow.webContents.executeJavaScript(`
             new Promise((resolve) => {
               const rewardExists = Array.from(document.querySelectorAll('a.tw-link')).some(anchor => anchor.textContent.trim() === "${rewardName}");
@@ -947,19 +992,24 @@ async function updateRewardStatus(gameName, rewardName) {
 
         const offline = await streamWindow.webContents.executeJavaScript(`
           new Promise((resolve) => {
-            const offlineElement = document.querySelector('.offline-recommendations-video-card-border-2');
+            const offlineElement = document.querySelector('.follow-panel-overlay');
             resolve(!!offlineElement);
           });
         `);
+        // set rewardAppears to null in order to activate success case
         if (offline) {
           rewardAppears = null;
         }
 
+        // End: new claiming in progress
         if (streamWindow.rewardName !== rewardName) {
           clearInterval(interval);
+          endofClaim(rewardName);
           resolve("A new reward claiming is in progress.");
           return;
         }
+
+        // display updates and claimed items if reward is available
         if (result.rewardAvailable) {
           win.webContents.send(
             "reward-status",
@@ -980,10 +1030,10 @@ async function updateRewardStatus(gameName, rewardName) {
           });
         }
 
-        // success
+        // End: success case
         if (success && rewardAppears) {
           clearInterval(interval);
-          streamWindow.rewardName = "";
+          streamWindow.rewardName = null;
           win.webContents.send(
             "reward-status",
             "update",
@@ -999,36 +1049,49 @@ async function updateRewardStatus(gameName, rewardName) {
             icon: path.join(__dirname, "assets/logo.png"),
           });
           notification.show();
+          endofClaim(rewardName);
           resolve("success");
+          return;
 
-          // unavailable
+          // End: unavailable case
         } else if ((!result.rewardAvailable || offline) && !rewardAppears) {
-          if (loopCount > 1) {
+          // loopCount > 2 (1.5 minutes) is to ensure twitch inventory page displays new rewards
+          if (loopCount > 2) {
             clearInterval(interval);
-            streamWindow.rewardName = "";
+            endofClaim(rewardName);
             if (!result.rewardAvailable) {
               resolve("Reward is already claimed or closed.");
             } else if (offline) {
               startClaim(gameName, rewardName);
               resolve("Streamer went offline, finding a new one...");
             }
+            return;
           }
         }
       } catch (error) {
         clearInterval(interval);
         console.error("Error updating reward progress:", error);
+        endofClaim(rewardName);
+        return;
       }
     };
 
+    interval = setInterval(checkRewards, 90000);
     checkRewards();
-    win.webContents.send(
-      "reward-status",
-      "enableClaim",
-      null,
-      null,
-      null,
-      null
-    );
-    interval = setInterval(checkRewards, 60000);
   });
+}
+
+// end power blocker and close stream if no ongoing campaigns
+function endofClaim(rewardName) {
+  currentCampaigns = currentCampaigns.filter((item) => item !== rewardName);
+  console.log("\nCurrent campaigns:", currentCampaigns);
+  if (currentCampaigns.length === 0) {
+    powerSaveBlocker.stop(psBlocker);
+    console.log(
+      powerSaveBlocker.isStarted(psBlocker)
+        ? "Power Save Blocker is active."
+        : "Power Save Blocker is inactive."
+    );
+    streamWindow.loadURL("about:blank");
+  }
 }
