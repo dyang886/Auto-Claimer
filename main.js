@@ -116,6 +116,7 @@ const checkLoginStatus = async (event) => {
   const services = [
     { url: "https://gaming.amazon.com/home", cookieName: "x-main" },
     { url: "https://www.twitch.tv/drops/campaigns", cookieName: "auth-token" },
+    { url: "https://accounts.nintendo.com", cookieName: "NAOPBS" },
   ];
 
   const results = {};
@@ -175,10 +176,16 @@ function createLoginWindow(serviceUrl) {
         ipcMainEvent.reply("session-status", false);
       }
     });
+  }
 
-    // Twitch
-  } else if (serviceUrl.includes("twitch.tv")) {
+  // Twitch
+  else if (serviceUrl.includes("twitch.tv")) {
     openLoginWindow("https://www.twitch.tv/login");
+  }
+
+  // Nintendo
+  else if (serviceUrl.includes("nintendo.com")) {
+    openLoginWindow("https://accounts.nintendo.com/login");
   }
 }
 
@@ -187,6 +194,7 @@ function openLoginWindow(loginUrl) {
   const loginWindow = new BrowserWindow({
     width: 500,
     height: 600,
+    icon: path.join(__dirname, "assets/logo.ico"),
     show: false,
   });
 
@@ -216,6 +224,15 @@ function openLoginWindow(loginUrl) {
         observer.observe(document.body, { childList: true, subtree: true });
       `);
     }
+
+    // Center nintendo login window
+    if (loginUrl.includes("nintendo.com")) {
+      loginWindow.webContents.executeJavaScript(`
+        const htmlElement = document.documentElement;
+        htmlElement.style.display = 'flex';
+        htmlElement.style.justifyContent = 'center';
+      `);
+    }
   });
 
   loginWindow.webContents.session.cookies.on(
@@ -236,6 +253,15 @@ function openLoginWindow(loginUrl) {
           cookie.name === "auth-token"
         ) {
           console.log("Twitch cookie found, login successful.");
+          loginHandled = true;
+        }
+
+        // Nintendo
+        else if (
+          cookie.domain.includes("nintendo.com") &&
+          cookie.name === "NAOPBS"
+        ) {
+          console.log("Nintendo cookie found, login successful.");
           loginHandled = true;
         }
 
@@ -996,7 +1022,7 @@ async function updateRewardStatus(gameName, rewardName) {
             resolve(!!offlineElement);
           });
         `);
-        // set rewardAppears to null in order to activate success case
+        // if streamer offline, set rewardAppears to null in order to activate unavailable case
         if (offline) {
           rewardAppears = null;
         }
@@ -1095,3 +1121,156 @@ function endofClaim(rewardName) {
     streamWindow.loadURL("about:blank");
   }
 }
+
+// ======================================================================
+// Nintendo claim process
+// ======================================================================
+ipcMain.on("nintendo-claim", async (event) => {
+  let nintendoWindow = new BrowserWindow({
+    width: 1280,
+    height: 720,
+    show: false,
+  });
+
+  nintendoWindow.loadURL("https://my.nintendo.com");
+  win.webContents.send(
+    "message-from-main",
+    "Starting to claim platinum points..."
+  );
+
+  nintendoWindow.webContents.once("did-finish-load", () => {
+    console.log("Finished loading My Nintendo page.");
+    nintendoWindow.webContents.reload();
+
+    // Claim weekly sign-in bonus (30)
+    nintendoWindow.webContents
+      .executeJavaScript(
+        `
+        new Promise((resolve, reject) => {
+          let totalPoints;
+
+          // click the signIn button if it appears
+          setTimeout(() => {
+            const signInButton = document.querySelector("button.signInButton");
+            if (signInButton) {
+              signInButton.click();
+            }
+            setupPointsObserver();
+          }, 3000);
+                
+          function setupPointsObserver() {
+            // click the mii character to claim points
+            const miiLink = document.querySelector("a.mii");
+            if (miiLink) {
+              miiLink.click();
+            }
+        
+            // get the points value
+            const pointsObserver = new MutationObserver((mutations, obs) => {
+              totalPoints = document.querySelector(".PointDetailCategory_item-platinum .value").textContent;
+              const pointsOverlay = document.querySelector("ul.GiftItem_points");
+              if (pointsOverlay) {
+                clearTimeout(pointsTimeout);
+                const pointsValue = document.querySelector("ul.GiftItem_points span.value").textContent;
+                obs.disconnect();
+                resolve({totalPoints: totalPoints, claimedPoints: pointsValue});
+              }
+            });
+        
+            pointsObserver.observe(document.body, { childList: true, subtree: true });
+            pointsTimeout = setTimeout(() => {
+              totalPoints = document.querySelector(".PointDetailCategory_item-platinum .value").textContent;
+              pointsObserver.disconnect();
+              resolve({totalPoints: totalPoints, claimedPoints: '0'});
+            }, 3000);
+          }
+        });
+      `
+      )
+      .then((result) => {
+        let claimedPoints = result.claimedPoints.trim();
+        let totalPoints = result.totalPoints.trim();
+        console.log("Weekly sign-in bonus claimed: ", claimedPoints, "\nTotal points: ", totalPoints);
+        if (claimedPoints === "0") {
+          win.webContents.send("message-from-main", "My Nintendo weekly sign-in bonus is not available.", "error");
+          win.webContents.send("platinum-points", claimedPoints, totalPoints, "true");
+        } else {
+          win.webContents.send("message-from-main", "Collected My Nintendo weekly sign-in bonus.", "success");
+          win.webContents.send("platinum-points", claimedPoints, totalPoints, "true");
+        }
+        win.webContents.send("message-from-main", "hideLoader");
+
+        // Claim all in earn points page
+        nintendoWindow.loadURL("https://my.nintendo.com/missions");
+        win.webContents.send(
+          "message-from-main",
+          "Checking Earn Points page..."
+        );
+
+        nintendoWindow.webContents.once("did-finish-load", () => {
+          console.log("Finished loading Earn Points page.");
+      
+          // Click the collect all now button
+          nintendoWindow.webContents
+            .executeJavaScript(
+              `
+              new Promise(resolve => {
+                setTimeout(() => {
+                  const activeButton = document.querySelector('.btn-primary.MissionBulkReceive_button');
+                  const inactiveButton = document.querySelector('.btn-disabled.MissionBulkReceive_button');
+
+                  if (activeButton) {
+                    activeButton.click();
+                    setTimeout(() => {
+                      getPoints();
+                    }, 3000);
+                  } else if (inactiveButton) {
+                    getPoints();
+                  }
+
+                  function getPoints() {
+                    let pointsValue = '0';
+                    const totalPoints = document.querySelector('.CurrentPoints_item-platinum .value').textContent;
+                    const claimedDiv = document.querySelector('ul.MissionBulkModal_pointList');
+                    const claimedDivParent = claimedDiv.closest('div.Modal');
+                    const claimed = window.getComputedStyle(claimedDivParent).display !== 'none';
+                    if (claimed) {
+                      pointsValue = claimedDiv.querySelector('.point .value').textContent;
+                    }
+
+                    resolve({totalPoints: totalPoints, claimedPoints: pointsValue});
+                  }
+                }, 3000);
+              })
+            `
+            )
+            .then((result2) => {
+              claimedPoints = result2.claimedPoints.trim();
+              totalPoints = result2.totalPoints.trim();
+              console.log("Earn points page claimed: ", claimedPoints, "\nTotal points: ", totalPoints);
+              if (claimedPoints === "0") {
+                win.webContents.send("message-from-main", "No points to claim from missions.", "error");
+                win.webContents.send("platinum-points", claimedPoints, totalPoints, "true");
+              } else {
+                win.webContents.send("message-from-main", "Collected all points from completed missions.", "success");
+                win.webContents.send("platinum-points", claimedPoints, totalPoints, "true");
+              }
+
+              nintendoWindow.close();
+              setTimeout(() => {
+                win.webContents.send("platinum-points", null, null, "finish");
+              }, 3000);
+            });
+        });
+      })
+      .catch((error) => {
+        console.error("JavaScript execution failed:", error);
+        win.webContents.send(
+          "message-from-main",
+          "Error claiming platinum points.",
+          "error"
+        );
+        return;
+      });
+  });
+});

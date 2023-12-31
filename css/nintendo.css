@@ -1,0 +1,54 @@
+#claim {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+#claimStatus {
+  display: flex;
+  flex-direction: column;
+  height: auto;
+  width: auto;
+  gap: 20px;
+  padding: 20px;
+  margin: 0px 20px 0px 20px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 20px;
+  background-color: rgba(255, 255, 255, 0.45);
+  box-shadow: 0 0 10px 1px rgba(0, 0, 0, 0.25);
+}
+
+#claimStatus * {
+  margin: 0px;
+}
+
+#claimStatus h1 {
+  color: rgb(5, 5, 181);
+}
+
+.pl-div {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  color: grey;
+  font-size: 70px;
+}
+
+.pl-div h2 {
+  padding-bottom: 10px;
+}
+
+#claimStatus .pl-points {
+  width: 130px;
+  height: auto;
+}
+
+#claimStatus:empty {
+  display: none;
+}
+
+#home {
+  width: 50%;
+}

@@ -39,6 +39,9 @@ window.api.receive("login-status", (status) => {
     } else if (url.includes("twitch.tv")) {
       serviceName = "Twitch";
       buttonId = "twitchLogout";
+    } else if (url.includes("nintendo.com")) {
+      serviceName = "Nintendo";
+      buttonId = "nintendoLogout";
     }
 
     if (serviceName) {
