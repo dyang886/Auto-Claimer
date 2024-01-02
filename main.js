@@ -342,7 +342,7 @@ ipcMain.on("amazon-claim", async (event) => {
   let amazonWindow = new BrowserWindow({
     width: 1280,
     height: 720,
-    show: false,
+    // show: false,
   });
 
   amazonWindow.loadURL("https://gaming.amazon.com/home");
@@ -545,7 +545,7 @@ ipcMain.on("open-twitch-windows", async (event) => {
     statusWindow = new BrowserWindow({
       width: 1280,
       height: 720,
-      show: false,
+      // show: false,
     });
     statusWindow.loadURL("https://www.twitch.tv/drops/inventory");
   }
@@ -554,7 +554,7 @@ ipcMain.on("open-twitch-windows", async (event) => {
     streamWindow = new BrowserWindow({
       width: 1280,
       height: 720,
-      show: false,
+      // show: false,
     });
   }
 });
@@ -784,6 +784,24 @@ async function startClaim(gameName, rewardName) {
           streamWindow.webContents.setAudioMuted(true);
           streamWindow.webContents.once("did-finish-load", async () => {
             streamWindow.webContents.reload();
+
+            // click Start Watching if "content intended for certain audiences" overlay appears
+            streamWindow.webContents.executeJavaScript(`
+              let CSButtonCnter = 0;
+              const consentButton = document.querySelector('[data-a-target=content-classification-gate-overlay-start-watching-button]');
+            
+              if (consentButton) {
+                const intervalId = setInterval(() => {
+                  if (CSButtonCnter < 5) {
+                    consentButton.click();
+                    CSButtonCnter++;
+                  } else {
+                    clearInterval(intervalId);
+                  }
+                }, 3000);
+              }
+            `);
+
             psBlocker = powerSaveBlocker.start("prevent-app-suspension");
             console.log(
               powerSaveBlocker.isStarted(psBlocker)
@@ -1059,7 +1077,6 @@ async function updateRewardStatus(gameName, rewardName) {
         // End: success case
         if (success && rewardAppears) {
           clearInterval(interval);
-          streamWindow.rewardName = null;
           win.webContents.send(
             "reward-status",
             "update",
@@ -1081,8 +1098,8 @@ async function updateRewardStatus(gameName, rewardName) {
 
           // End: unavailable case
         } else if ((!result.rewardAvailable || offline) && !rewardAppears) {
-          // loopCount > 2 (1.5 minutes) is to ensure twitch inventory page displays new rewards
-          if (loopCount > 2) {
+          // loopCount > 1 (2 minutes) is to ensure twitch inventory page displays new rewards
+          if (loopCount > 1) {
             clearInterval(interval);
             endofClaim(rewardName);
             if (!result.rewardAvailable) {
@@ -1102,7 +1119,7 @@ async function updateRewardStatus(gameName, rewardName) {
       }
     };
 
-    interval = setInterval(checkRewards, 90000);
+    interval = setInterval(checkRewards, 120000);
     checkRewards();
   });
 }
@@ -1112,6 +1129,7 @@ function endofClaim(rewardName) {
   currentCampaigns = currentCampaigns.filter((item) => item !== rewardName);
   console.log("\nCurrent campaigns:", currentCampaigns);
   if (currentCampaigns.length === 0) {
+    streamWindow.rewardName = null;
     powerSaveBlocker.stop(psBlocker);
     console.log(
       powerSaveBlocker.isStarted(psBlocker)
